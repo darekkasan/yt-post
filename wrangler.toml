@@ -1,0 +1,12 @@
+name = "yt-post"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+[placement]
+mode = "smart"
+
+# カスタムドメインで配信する場合は routes を有効化してください。
+# （デプロイ先アカウントのゾーンに合わせて pattern を書き換える）
+# routes = [
+#   { pattern = "example.com/*", custom_domain = true }
+# ]
