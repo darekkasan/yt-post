@@ -58,7 +58,7 @@ npm install
 npx wrangler publish
 ```
 
-カスタムドメインで配信する場合は `wrangler.toml` の `routes`（コメントアウト済みの例）を有効化してください。個人用の本番設定は `wrangler.local.toml`（`.gitignore` 済み）に分離し、`npx wrangler publish -c wrangler.local.toml` でデプロイできます。
+カスタムドメインで配信する場合は `wrangler.toml` の `routes`（コメントアウト済みの例）を有効化してください。
 
 ## 仕組み
 
