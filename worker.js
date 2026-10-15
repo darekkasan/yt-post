@@ -123,7 +123,20 @@ function findAll(obj, key, results = []) {
 // ─── run のリダイレクトURL取得 ────────────────────────────────────────────────
 
 function resolveRunUrl(run) {
-  return run?.navigationEndpoint?.urlEndpoint?.url ?? null;
+  const ne = run?.navigationEndpoint;
+  if (!ne) return null;
+  const direct = ne.urlEndpoint?.url;
+  if (direct) return direct;
+  // 内部リンク（再生リスト・他ポスト・チャンネル等）は urlEndpoint ではなく
+  // webCommandMetadata.url / browseEndpoint.canonicalBaseUrl に相対パスで入る。
+  // これを解決しないと本文中のリンクがテキストのまま（かつURLが省略表記で
+  // 途中で切れた状態）になる。
+  const rel =
+    ne.commandMetadata?.webCommandMetadata?.url ??
+    ne.browseEndpoint?.canonicalBaseUrl ??
+    null;
+  if (!rel) return null;
+  return rel.startsWith("http") ? rel : `https://www.youtube.com${rel}`;
 }
 
 // YouTubeの "https://www.youtube.com/redirect?event=...&redir_token=...&q=<実URL>"
@@ -275,6 +288,49 @@ function extractSharedVideo(p) {
     views: v.viewCountText?.simpleText ?? "",
     owner: textOf(v.ownerText) || textOf(v.longBylineText) || textOf(v.shortBylineText),
     published: v.publishedTimeText?.simpleText ?? "",
+  };
+}
+
+// YouTubeコミュニティポストの「再生リストの共有」添付。
+// backstagePostRenderer.backstageAttachment.playlistRenderer に格納される。
+// 投稿画像(yt3.ggpht.com)も動画共有(videoRenderer)も持たないため別枠で取り出す。
+// サムネイルは先頭動画の i.ytimg.com 静的JPEG（署名 sqp/rs 付き）なので、
+// 動画共有と同じくクエリを落として失効しないURLに正規化して使う。
+function extractSharedPlaylist(p) {
+  const pl = p?.backstageAttachment?.playlistRenderer;
+  if (!pl || !pl.playlistId) return null;
+  const textOf = (node) => node?.runs?.[0]?.text ?? node?.simpleText ?? "";
+  const pickBest = (thumbs) =>
+    (thumbs ?? []).reduce(
+      (a, b) => ((b.width ?? 0) > (a?.width ?? 0) ? b : a),
+      null
+    );
+  const best =
+    pickBest(pl.thumbnails?.[0]?.thumbnails) ??
+    pickBest(
+      pl.thumbnailRenderer?.playlistVideoThumbnailRenderer?.thumbnail?.thumbnails
+    );
+  const videoCount = /^\d+$/.test(pl.videoCount ?? "")
+    ? pl.videoCount
+    : (pl.videoCountText?.runs?.[0]?.text ?? "").replace(/[^0-9]/g, "");
+  const videos = (pl.videos ?? [])
+    .map((v) => v.childVideoRenderer)
+    .filter(Boolean)
+    .map((v) => ({
+      video_id: v.videoId,
+      title: textOf(v.title),
+      length: v.lengthText?.simpleText ?? "",
+    }));
+  return {
+    playlist_id: pl.playlistId,
+    title: textOf(pl.title),
+    url: `https://www.youtube.com/playlist?list=${pl.playlistId}`,
+    thumbnail: best?.url ? best.url.replace(/\?.*$/, "") : null,
+    thumbnail_width: best?.width ?? null,
+    thumbnail_height: best?.height ?? null,
+    video_count: videoCount,
+    owner: textOf(pl.longBylineText) || textOf(pl.shortBylineText),
+    videos,
   };
 }
 
@@ -640,6 +696,7 @@ async function extractPost(html, fetchLinkTitles = true, fetchComments = true, c
     ...pollImageHashes(quiz),
   ]);
   const video = extractSharedVideo(p);
+  const playlist = extractSharedPlaylist(p);
 
   // ここまでの処理と並行して走っていたコメント数取得の結果を待つ。
   // ここに来る頃には既に完了していることが多いため、実質待ち時間ゼロになる。
@@ -660,6 +717,7 @@ async function extractPost(html, fetchLinkTitles = true, fetchComments = true, c
     poll, // ポール投稿でなければ null
     quiz, // クイズ投稿でなければ null
     video, // 動画共有投稿でなければ null
+    playlist, // 再生リスト共有投稿でなければ null
     images: extractImages(html, excludeHashes),
   };
 }
@@ -704,6 +762,14 @@ function buildPostBodyText(post) {
   if (post.video) {
     const label = post.video.title || post.video.url;
     bodyText += `${bodyText ? "\n\n" : ""}▶ [${label}](${post.video.url})`;
+  }
+  // 共有再生リストも本文にタイトル付きリンクとして追記する（本数があれば添える）。
+  if (post.playlist) {
+    const count = post.playlist.video_count
+      ? `（${post.playlist.video_count}本）`
+      : "";
+    const label = post.playlist.title || post.playlist.url;
+    bodyText += `${bodyText ? "\n\n" : ""}📃 [${label}](${post.playlist.url})${count}`;
   }
   // コメント数といいね数は別々に取得した実数を、そのまま本文末尾へ表示する。
   const engagementText = buildEngagementText(post);
@@ -756,12 +822,15 @@ function buildOgHtml(post, size = null, baseUrl = "", isDiscordBot = false, acti
     return escapeHtml(u);
   });
   // 画像添付が無く動画共有がある場合は、その動画サムネイルを埋め込み画像に使う。
+  // 動画が無く再生リスト共有がある場合は、その再生リストのサムネイルを使う。
   // i.ytimg.com の静的JPEGで署名不要・安定しているため直接指定する。
   const ogImageUrls = images.length
     ? images
     : post.video?.thumbnail
       ? [escapeHtml(post.video.thumbnail)]
-      : [];
+      : post.playlist?.thumbnail
+        ? [escapeHtml(post.playlist.thumbnail)]
+        : [];
   const ogImages = ogImageUrls.map((u) => `<meta property="og:image" content="${u}" />`).join("\n");
   const twImage  = ogImageUrls[0] ? `<meta name="twitter:image" content="${ogImageUrls[0]}" />` : "";
 
@@ -915,7 +984,7 @@ function htmlResponse(html, status = 200) {
 // 投票は票数が変化するため保存しない。通常投稿は6時間キャッシュする。
 const POST_CACHE_SECONDS = 60 * 60 * 6;
 // 表示仕様を変更した際はこの値を上げることで古いレスポンスを即座に回避できる。
-const POST_CACHE_VERSION = "v14";
+const POST_CACHE_VERSION = "v15";
 
 function getPostCacheKey(request) {
   const cacheUrl = new URL(request.url);
@@ -1034,32 +1103,35 @@ function buildActivityJson(post, origin) {
           },
         };
       })
-    : post.video?.thumbnail
-      ? [
-          (() => {
-            const w = post.video.thumbnail_width || 720;
-            const h = post.video.thumbnail_height || 404;
-            return {
-              id: `${post.post_id || "video"}-0`,
-              type: "image",
-              url: post.video.thumbnail,
-              preview_url: null,
-              remote_url: null,
-              preview_remote_url: null,
-              text_url: null,
-              description: null,
-              meta: {
-                original: {
-                  width: w,
-                  height: h,
-                  size: `${w}x${h}`,
-                  aspect: Number((w / h).toFixed(2)),
-                },
+    : (() => {
+        // 画像添付が無い時は、動画共有→再生リスト共有の順でサムネイルを使う。
+        const thumb = post.video?.thumbnail ?? post.playlist?.thumbnail;
+        if (!thumb) return [];
+        const w =
+          post.video?.thumbnail_width || post.playlist?.thumbnail_width || 720;
+        const h =
+          post.video?.thumbnail_height || post.playlist?.thumbnail_height || 404;
+        return [
+          {
+            id: `${post.post_id || "media"}-0`,
+            type: "image",
+            url: thumb,
+            preview_url: null,
+            remote_url: null,
+            preview_remote_url: null,
+            text_url: null,
+            description: null,
+            meta: {
+              original: {
+                width: w,
+                height: h,
+                size: `${w}x${h}`,
+                aspect: Number((w / h).toFixed(2)),
               },
-            };
-          })(),
-        ]
-      : [];
+            },
+          },
+        ];
+      })();
 
   return {
     id: post.post_id,
@@ -1467,7 +1539,7 @@ export default {
           return jsonResponse({ error: "No community post found in the page" }, 404);
         }
         const response = activityJsonResponse(buildActivityJson(post, url.origin));
-        return post.poll
+        return post.poll || post.quiz
           ? noStorePostResponse(response)
           : await cachePostResponse(request, response);
       } catch (e) {
@@ -1552,7 +1624,7 @@ export default {
           }));
         }
                 const response = jsonResponse(post);
-        return post.poll
+        return post.poll || post.quiz
           ? noStorePostResponse(response)
           : await cachePostResponse(request, response);
       }
@@ -1560,7 +1632,7 @@ export default {
       // 出していなかった（他のUAだと非表示）。それに合わせてUA判定する。
       const isDiscordBot = /Discordbot/i.test(request.headers.get("User-Agent") || "");
       const response = htmlResponse(buildOgHtml(post, size, url.origin, isDiscordBot, activityEnabled));
-      return post.poll
+      return post.poll || post.quiz
         ? noStorePostResponse(response)
         : await cachePostResponse(request, response);
 
