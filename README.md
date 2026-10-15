@@ -44,8 +44,12 @@ FxEmbed / FixTweet に着想を得ています。
 
 ```
 https://www.youtube.com/post/Ugkx...
-→ https://<your-worker>/post/Ugkx...
+→ https://ytp.drks.f5.si/post/Ugkx...
 ```
+
+`youtube.com/post/...` のホストを `ytp.drks.f5.si` に置き換えるだけです。
+
+デモ: https://ytp.drks.f5.si/post/UgkxTHSXgSmhbyg0Z3wVyojtxQ2Wqw13QTPv
 
 Discord に貼ると、投稿者アイコン・本文・リアクション数・画像（GIFはアニメ）・動画リンク・投票/クイズを含むカードが出ます。
 
@@ -69,7 +73,7 @@ npx wrangler publish
 
 ## ライセンス
 
-CC0 1.0 Universal（`LICENSE` 参照）。パブリックドメインに提供します。
+CC0 1.0 Universal（`LICENSE`）または WTFPL 2.0（`LICENSE-WTFPL`）のデュアルライセンス。どちらでも好きな方を選べます。実質的にパブリックドメインに提供します。
 
 ## 謝辞
 
