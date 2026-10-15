@@ -49,8 +49,6 @@ https://www.youtube.com/post/Ugkx...
 
 `youtube.com/post/...` のホストを `ytp.drks.f5.si` に置き換えるだけです。
 
-デモ: https://ytp.drks.f5.si/post/UgkxTHSXgSmhbyg0Z3wVyojtxQ2Wqw13QTPv
-
 Discord に貼ると、投稿者アイコン・本文・リアクション数・画像（GIFはアニメ）・動画リンク・投票/クイズを含むカードが出ます。
 
 ## デプロイ
